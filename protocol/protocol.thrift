@@ -263,6 +263,12 @@ struct UserInfo
     2: double scheduleLoad;
 }
 
+struct SearchJobsResult
+{
+    1: list<Job> result;
+    2: bool hasMoreResults;
+}
+
 exception ResourceNotFound          {}
 exception Forbidden                 {}
 exception InvalidArguments          {}
@@ -292,6 +298,8 @@ service ChronosNode
     void updateUserGroupId(1: i64 userId, 2: i64 userGroupId) throws(1: InternalError ie);
     double getUserScheduleLoad(1: i64 userId) throws(1: InternalError ie);
     list<UserInfo> getUserInfoForAllUsers() throws(1: InternalError ie);
+
+    SearchJobsResult searchJobsByUrl(1: string query) throws(1: InternalError ie, 2: InvalidArguments ia);
 
     TestRunHandle submitJobTestRun(1: Job job, 2: string xForwardedFor) throws(1: InternalError ie, 2: InvalidArguments ia, 3: FeatureNotAvailable na);
     TestRunStatus getJobTestRunStatus(1: TestRunHandle handle) throws(1: InvalidArguments ia, 2: FeatureNotAvailable na);

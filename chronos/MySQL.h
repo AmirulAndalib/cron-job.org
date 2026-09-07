@@ -1,6 +1,6 @@
 /*
  * chronos, the cron-job.org execution daemon
- * Copyright (C) 2017 Patrick Schlangen <patrick@schlangen.me>
+ * Copyright (C) 2017-2026 Patrick Schlangen <patrick@schlangen.me>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -69,6 +69,7 @@ namespace Chronos
 		std::unique_ptr<MySQL_Result> query(const char *strQuery, ...);
 		my_ulonglong insertId();
 		my_ulonglong affectedRows();
+		std::string escape(const std::string &str);
 		static void libInit();
 		static void libCleanup();
 

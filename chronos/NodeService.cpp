@@ -1,6 +1,6 @@
 /*
  * chronos, the cron-job.org execution daemon
- * Copyright (C) 2017-2025 Patrick Schlangen <patrick@schlangen.me>
+ * Copyright (C) 2017-2026 Patrick Schlangen <patrick@schlangen.me>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <iostream>
 #include <ctime>
 
@@ -53,7 +54,76 @@ int getUserDbSchemaVersion(Chronos::SQLite_DB &userDB)
 	return 0;
 }
 
+template<typename T>
+void getJobSchedule(const std::unique_ptr<Chronos::MySQL_DB> &db, const JobIdentifier &identifier, const char *name, std::set<T> &target)
+{
+    MYSQL_ROW row;
+    auto res = db->query("SELECT `%s` FROM `job_%ss` WHERE `jobid`=%v",
+        name, name,
+        identifier.jobId);
+    while((row = res->fetchRow()))
+    {
+        target.insert(std::stoi(row[0]));
+    }
 }
+
+std::vector<Job> listJobs(const std::function<std::unique_ptr<Chronos::MySQL_Result>(const char *fields)> &queryFn)
+{
+    std::vector<Job> result;
+
+    MYSQL_ROW row;
+    auto res = queryFn("`jobid`,`userid`,`enabled`,`title`,`save_responses`,`last_status`,`last_fetch`,`last_duration`,`fail_counter`,`url`,`request_method`,`timezone`,`type`,`usergroupid`,`request_timeout`,`redirect_success`,`expires_at`,`folderid`,`unfiltered_fail_counter`,`ssl_cert_expiry`");
+    result.reserve(res->numRows());
+    while((row = res->fetchRow()))
+    {
+        Job job;
+
+        job.identifier.jobId = std::stoll(row[0]);
+        job.identifier.userId = std::stoll(row[1]);
+
+        job.metaData.enabled = std::strcmp(row[2], "1") == 0;
+        job.metaData.title = row[3];
+        job.metaData.saveResponses = std::strcmp(row[4], "1") == 0;
+        job.metaData.type = static_cast<JobType::type>(std::stoi(row[12])); //!< @todo Nicer conversion
+        job.metaData.userGroupId = std::stoll(row[13]);
+        job.metaData.requestTimeout = std::stoi(row[14]);
+        job.metaData.redirectSuccess = std::strcmp(row[15], "1") == 0;
+        job.metaData.folderId = std::stoi(row[17]);
+        job.metaData.__isset.userGroupId = true;
+        job.metaData.__isset.requestTimeout = true;
+        job.metaData.__isset.redirectSuccess = true;
+        job.metaData.__isset.folderId = true;
+        job.__isset.metaData = true;
+
+        job.executionInfo.lastStatus = static_cast<JobStatus::type>(std::stoi(row[5])); //!< @todo Nicer conversion
+        job.executionInfo.lastFetch = std::stoll(row[6]);
+        job.executionInfo.lastDuration = std::stoi(row[7]);
+        job.executionInfo.failCounter = std::stoi(row[8]);
+        job.executionInfo.unfilteredFailCounter = std::stoi(row[18]);
+        if(std::stoll(row[19]) > 0)
+        {
+            job.executionInfo.sslCertExpiry = std::stoll(row[19]);
+            job.executionInfo.__isset.sslCertExpiry = true;
+        }
+        job.__isset.executionInfo = true;
+
+        job.data.url = row[9];
+        job.data.requestMethod = static_cast<RequestMethod::type>(std::stoi(row[10])); //!< @todo Nicer conversion
+        job.__isset.data = true;
+
+        job.schedule.timezone = row[11];
+        job.__isset.schedule = true;
+
+        job.schedule.expiresAt = std::stoll(row[16]);
+        job.schedule.__isset.expiresAt = true;
+
+        result.push_back(job);
+    }
+
+    return result;
+}
+
+} // anon ns
 
 namespace {
 
@@ -73,6 +143,43 @@ public:
         return true;
     }
 
+    void searchJobsByUrl(SearchJobsResult &_return, const std::string &query) override
+    {
+        std::cout << "ChronosNodeHandler::searchJobsByUrl(" << query.size() << ")" << std::endl;
+
+        constexpr const int MAX_RESULTS = 100;
+        constexpr const int MIN_QUERY_LENGTH = 3;
+        constexpr const int MAX_QUERY_LENGTH = 1024;
+
+        std::string trimmedQuery = Chronos::Utils::trim(query);
+        if (trimmedQuery.size() < MIN_QUERY_LENGTH || trimmedQuery.size() > MAX_QUERY_LENGTH)
+        {
+            Chronos::RpcThrow::invalidArguments();
+        }
+
+        try
+        {
+            std::unique_ptr<Chronos::MySQL_DB> db(Chronos::App::getInstance()->createMySQLConnection());
+
+            _return.result = listJobs([&](const char *fields) {
+                return db->query("SELECT %s FROM `job` WHERE LOCATE('%q', `url`)>0 LIMIT %d",
+                    fields,
+                    trimmedQuery.c_str(),
+                    MAX_RESULTS + 1);
+            });
+            _return.hasMoreResults = _return.result.size() > MAX_RESULTS;
+            if(_return.hasMoreResults)
+            {
+                _return.result.pop_back();
+            }
+        }
+        catch(const std::exception &ex)
+        {
+            std::cout << "ChronosNodeHandler::searchJobsByUrl(): Exception: "  << ex.what() << std::endl;
+            Chronos::RpcThrow::internalError();
+        }
+    }
+
     void getJobsForUser(std::vector<Job> &_return, const int64_t userId) override
     {
         std::cout << "ChronosNodeHandler::getJobsForUser(" << userId << ")" << std::endl;
@@ -81,60 +188,19 @@ public:
         {
             std::unique_ptr<Chronos::MySQL_DB> db(Chronos::App::getInstance()->createMySQLConnection());
 
-	        MYSQL_ROW row;
-            auto res = db->query("SELECT `jobid`,`userid`,`enabled`,`title`,`save_responses`,`last_status`,`last_fetch`,`last_duration`,`fail_counter`,`url`,`request_method`,`timezone`,`type`,`usergroupid`,`request_timeout`,`redirect_success`,`expires_at`,`folderid`,`unfiltered_fail_counter`,`ssl_cert_expiry` FROM `job` WHERE `userid`=%v",
-                userId);
-            _return.reserve(res->numRows());
-            while((row = res->fetchRow()))
+            _return = listJobs([&](const char *fields) {
+                return db->query("SELECT %s FROM `job` WHERE `userid`=%v",
+                    fields,
+                    userId);
+            });
+
+            for (auto &job : _return)
             {
-                Job job;
-
-                job.identifier.jobId = std::stoll(row[0]);
-                job.identifier.userId = std::stoll(row[1]);
-
-                job.metaData.enabled = std::strcmp(row[2], "1") == 0;
-                job.metaData.title = row[3];
-                job.metaData.saveResponses = std::strcmp(row[4], "1") == 0;
-                job.metaData.type = static_cast<JobType::type>(std::stoi(row[12])); //!< @todo Nicer conversion
-                job.metaData.userGroupId = std::stoll(row[13]);
-                job.metaData.requestTimeout = std::stoi(row[14]);
-                job.metaData.redirectSuccess = std::strcmp(row[15], "1") == 0;
-                job.metaData.folderId = std::stoi(row[17]);
-                job.metaData.__isset.userGroupId = true;
-                job.metaData.__isset.requestTimeout = true;
-                job.metaData.__isset.redirectSuccess = true;
-                job.metaData.__isset.folderId = true;
-                job.__isset.metaData = true;
-
-                job.executionInfo.lastStatus = static_cast<JobStatus::type>(std::stoi(row[5])); //!< @todo Nicer conversion
-                job.executionInfo.lastFetch = std::stoll(row[6]);
-                job.executionInfo.lastDuration = std::stoi(row[7]);
-                job.executionInfo.failCounter = std::stoi(row[8]);
-                job.executionInfo.unfilteredFailCounter = std::stoi(row[18]);
-                if(std::stoll(row[19]) > 0)
-                {
-                    job.executionInfo.sslCertExpiry = std::stoll(row[19]);
-                    job.executionInfo.__isset.sslCertExpiry = true;
-                }
-                job.__isset.executionInfo = true;
-
-                job.data.url = row[9];
-                job.data.requestMethod = static_cast<RequestMethod::type>(std::stoi(row[10])); //!< @todo Nicer conversion
-                job.__isset.data = true;
-
-                job.schedule.timezone = row[11];
-                job.__isset.schedule = true;
-
-                job.schedule.expiresAt = std::stoll(row[16]);
-                job.schedule.__isset.expiresAt = true;
-
                 getJobSchedule(db, job.identifier, "hour",      job.schedule.hours);
                 getJobSchedule(db, job.identifier, "mday",      job.schedule.mdays);
                 getJobSchedule(db, job.identifier, "minute",    job.schedule.minutes);
                 getJobSchedule(db, job.identifier, "month",     job.schedule.months);
                 getJobSchedule(db, job.identifier, "wday",      job.schedule.wdays);
-
-                _return.push_back(job);
             }
         }
         catch(const std::exception &ex)
@@ -1035,19 +1101,6 @@ private:
         }
 
         return 0.;
-    }
-
-    template<typename T>
-    void getJobSchedule(std::unique_ptr<Chronos::MySQL_DB> &db, const JobIdentifier &identifier, const char *name, std::set<T> &target) const
-    {
-        MYSQL_ROW row;
-        auto res = db->query("SELECT `%s` FROM `job_%ss` WHERE `jobid`=%v",
-            name, name,
-            identifier.jobId);
-        while((row = res->fetchRow()))
-        {
-            target.insert(std::stoi(row[0]));
-        }
     }
 
     template<typename T>
