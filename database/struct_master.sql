@@ -276,3 +276,24 @@ CREATE TABLE `folder` (
   KEY `userid` (`userid`),
   UNIQUE KEY `user_folder_title` (`userid`, `title`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `bouncelog` (
+  `bouncelogid` bigint NOT NULL AUTO_INCREMENT,
+  `type` varchar(32) NOT NULL DEFAULT '',
+  `arg` varchar(64) NOT NULL DEFAULT '',
+  `received` bigint NOT NULL DEFAULT '0',
+  `userid` int NOT NULL DEFAULT '0',
+  `jobid` int NOT NULL DEFAULT '0',
+  `notification_type` tinyint NOT NULL DEFAULT '0',
+  PRIMARY KEY (`bouncelogid`),
+  KEY `userid` (`userid`),
+  KEY `jobid` (`jobid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE `bouncemessage` (
+  `bouncelogid` bigint NOT NULL,
+  `body` text,
+  `sender` varchar(255) NOT NULL,
+  `recipient` varchar(255) NOT NULL,
+  PRIMARY KEY (`bouncelogid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
