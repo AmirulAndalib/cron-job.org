@@ -5,6 +5,8 @@
 version: "3.9"
 services:
   mysql-master:
+    networks:
+      - cjo-net
     image: mysql:8.3
     command: --default-authentication-plugin=mysql_native_password --sql_mode="" --skip-name-resolve --tls-version=""
     environment:
@@ -20,6 +22,8 @@ services:
       - ./database/phrases_mail_template.sql:/docker-entrypoint-initdb.d/02_phrases_mail_template.sql
       - ./database/phrases_ssl_cert_expiry_notify.sql:/docker-entrypoint-initdb.d/03_phrases_ssl_cert_expiry_notify.sql
   mysql-node:
+    networks:
+      - cjo-net
     image: mysql:8.3
     command: --default-authentication-plugin=mysql_native_password --sql_mode="" --skip-name-resolve --tls-version=""
     environment:
@@ -32,14 +36,20 @@ services:
       - ${NODE_MYSQL_LOG_DIR-./docker-data/logs/mysql-node}:/var/log/mysql
       - ./database/struct_node.sql:/docker-entrypoint-initdb.d/struct_node.sql
   redis:
+    networks:
+      - cjo-net
     image: redis:7-alpine
   frontend:
+    networks:
+      - cjo-net
     build:
       context: ./frontend
       args:
         CJO_PROJECT_NAME: ${CJO_PROJECT_NAME}
         CJO_BASE_URL: ${CJO_BASE_URL}
   statuspage:
+    networks:
+      - cjo-net
     build:
       context: ./statuspage
       args:
@@ -47,6 +57,8 @@ services:
         CJO_BASE_URL: ${CJO_BASE_URL}
   api:
     build: ./api
+    networks:
+      - cjo-net
     volumes:
       - ${API_CONFIG-./docker-data/config/config.inc.php}:/var/www/html/config/config.inc.php
     environment:
@@ -71,6 +83,8 @@ services:
       - redis
   www:
     build: ./docker/www
+    networks:
+      - cjo-net
     ports:
       - "${CJO_FRONTEND_PORT}:80"
     depends_on:
@@ -78,6 +92,8 @@ services:
       - api
   chronos:
     build: ./
+    networks:
+      - cjo-net
     volumes:
       - ${CHRONOS_DATA_DIR-./docker-data/data/chronos}:/var/lib/cron-job.org-data
     environment:
@@ -98,3 +114,7 @@ services:
     depends_on:
       - mysql-master
       - mysql-node
+
+networks:
+  cjo-net:
+    driver: bridge
